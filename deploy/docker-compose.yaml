@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  twist2:
+    # Build context is '..', meaning the root TWIST2 folder
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    
+    image: twist2-dev:latest
+    container_name: twist2-node
+    
+    # Network: Host mode is required for ROS/Unitree communication
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    
+    # GPU Access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Mounts
+    volumes:
+      # 1. MOUNT YOUR CODE:
+      # Maps the TWIST2 repo (parent folder) to the container workspace
+      - ..:/home/developer/ws/TWIST2:rw
+      
+      # 2. GUI / Display support
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ~/.Xauthority:/home/developer/.Xauthority:rw
+
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/home/developer/.Xauthority
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - NVIDIA_DRIVER_CAPABILITIES=all
+
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      # Uncomment if using joysticks/controllers
+      # - /dev/input:/dev/input
+
+    command: /bin/bash
