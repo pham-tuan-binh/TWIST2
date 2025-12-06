@@ -169,9 +169,22 @@ RUN source $CONDA_DIR/etc/profile.d/conda.sh && conda activate gmr \
     && python setup.py install
 
 # --------------------------------------------------------
-# 8. Final Dependencies
+# 8. Install Local Editable Packages in TWIST2
 # --------------------------------------------------------
-# FIX: Source conda.sh directly
+# Set the final working directory
+WORKDIR /home/$USERNAME/ws/TWIST2
+
+# Ensure the shell is bash for proper execution of source and chained commands
+SHELL ["/bin/bash", "-c"]
+
+# Activate the environment and run the installation commands inside the correct subdirectories
+RUN source $CONDA_DIR/etc/profile.d/conda.sh && conda activate twist2 \
+    && cd rsl_rl && pip install -e . && cd .. \
+    && cd legged_gym && pip install -e . && cd .. \
+    && cd pose && pip install -e . && cd ..
+
+CMD ["/bin/bash"]
+
 RUN source $CONDA_DIR/etc/profile.d/conda.sh && conda activate twist2 \
     && pip install "numpy==1.23.0" pydelatin wandb tqdm opencv-python ipdb pyfqmr flask dill gdown hydra-core "imageio[ffmpeg]" mujoco mujoco-python-viewer isaacgym-stubs pytorch-kinematics rich termcolor zmq \
     && pip install redis[hiredis] pyttsx3 onnx onnxruntime-gpu customtkinter
