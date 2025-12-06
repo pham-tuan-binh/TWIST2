@@ -171,11 +171,21 @@ RUN source $CONDA_DIR/etc/profile.d/conda.sh && conda activate gmr \
 # --------------------------------------------------------
 # 8. Install Local Editable Packages in TWIST2
 # --------------------------------------------------------
-# Set the final working directory
-WORKDIR /home/$USERNAME/ws/TWIST2
+# 1. Set the correct working directory
+WORKDIR /home/developer/ws/TWIST2
 
-# Copy working directory
+# 2. Copy the files into the image (often owned by root)
 COPY . .
+
+# 3. SWITCH TO ROOT to perform the permission fix
+USER root 
+
+# 4. Change ownership of the copied files to the 'developer' user
+# This is required so 'developer' can write the egg-info during pip install.
+RUN chown -R developer:developer /home/developer/ws/TWIST2 
+
+# 5. SWITCH BACK to the non-root user (critical for security)
+USER developer
 
 # Ensure the shell is bash for proper execution of source and chained commands
 SHELL ["/bin/bash", "-c"]
