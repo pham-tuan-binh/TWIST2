@@ -87,11 +87,15 @@ class EpisodeWriter():
         self.episode_dir = os.path.join(self.task_dir, f"episode_{str(self.episode_id).zfill(4)}")
         os.makedirs(self.episode_dir, exist_ok=True)
         
+        # --- MODIFIED SECTION START ---
+        # Instead of creating one rgb folder, we create two for left and right
         if "rgb" in self.data_keys:
-            self.rgb_dir = os.path.join(self.episode_dir, 'rgb')
-            os.makedirs(self.rgb_dir, exist_ok=True)
-            print(f"==> rgb_dir: {self.rgb_dir}")
-       
+            self.rgb_left_dir = os.path.join(self.episode_dir, 'rgb_left')
+            self.rgb_right_dir = os.path.join(self.episode_dir, 'rgb_right')
+            os.makedirs(self.rgb_left_dir, exist_ok=True)
+            os.makedirs(self.rgb_right_dir, exist_ok=True)
+            print(f"==> created split rgb dirs: \n    {self.rgb_left_dir}\n    {self.rgb_right_dir}")
+        # --- MODIFIED SECTION END ---
 
         self.json_path = os.path.join(self.episode_dir, 'data.json')
 
@@ -147,14 +151,37 @@ class EpisodeWriter():
         # low level action
         action_low_level = item_data.get('action_low_level', None)
 
-        # Save images
+        # --- MODIFIED SECTION START ---
+        # Split and Save images
         if rgb is not None:
-            color_name = f'{str(idx).zfill(6)}.jpg'
-            save_path = os.path.join(self.rgb_dir, color_name)
-            if not cv2.imwrite(save_path, rgb):
-                print(f"Failed to save rgb image.")
-            item_data['rgb'] = str(Path(save_path).relative_to(Path(self.json_path).parent))
+            # Calculate width to split in half
+            h, w, c = rgb.shape
+            width_cutoff = w // 2
             
+            # Slice the image
+            rgb_left = rgb[:, :width_cutoff]
+            rgb_right = rgb[:, width_cutoff:]
+            
+            color_name = f'{str(idx).zfill(6)}.jpg'
+            
+            # Save Left
+            save_path_left = os.path.join(self.rgb_left_dir, color_name)
+            if not cv2.imwrite(save_path_left, rgb_left):
+                print(f"Failed to save rgb_left image.")
+            
+            # Save Right
+            save_path_right = os.path.join(self.rgb_right_dir, color_name)
+            if not cv2.imwrite(save_path_right, rgb_right):
+                print(f"Failed to save rgb_right image.")
+                
+            # Update item_data keys with relative paths
+            item_data['rgb_left'] = str(Path(save_path_left).relative_to(Path(self.json_path).parent))
+            item_data['rgb_right'] = str(Path(save_path_right).relative_to(Path(self.json_path).parent))
+            
+            # Remove the original large rgb data from the dict to avoid duplication in JSON
+            if 'rgb' in item_data:
+                del item_data['rgb']
+        # --- MODIFIED SECTION END ---
                 
         # state and action are directly saved to the episode_data
         if state_body is not None:
