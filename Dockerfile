@@ -10,7 +10,7 @@ ENV TZ=Etc/UTC
 # 2. System Dependencies
 # --------------------------------------------------------
 RUN apt-get update && apt-get install -y \
-    curl wget git build-essential cmake \
+    curl wget git build-essential cmake espeak-ng \
     python3-pip python3-dev \
     net-tools iputils-ping vim sudo \
     locales tzdata \
