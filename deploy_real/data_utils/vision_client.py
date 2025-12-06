@@ -5,347 +5,166 @@ import zmq
 import numpy as np
 import time
 import cv2
-import io
+import struct
 from multiprocessing import shared_memory
 from collections import deque
 from rich import print
-import struct
-import pickle
 
 class VisionClient:
     def __init__(
         self,
         server_address="127.0.0.1",
         port=5555,
-        
         img_shape=None,
         img_shm_name=None,
-        depth_shape=None,
-        depth_shm_name=None,
-        
         unit_test=False,
         image_show=False,
-        depth_show=False,
     ):
-        """
-        A ZeroMQ subscriber client for receiving JPEG-compressed RGB and depth data from a single camera.
-
-        Parameters:
-        -----------
-        server_address : str
-            The IP address or hostname where the server is running.
-        port : int
-            The ZeroMQ PUB socket port used by the server.
-        img_shape : tuple or None
-            Shape (H, W, C) for the RGB image shared memory array (optional).
-            Default resolution is 480x640 (Height x Width).
-        img_shm_name : str or None
-            Shared memory name for RGB image (optional).
-        depth_shape : tuple or None
-            Shape (H, W) for depth image shared memory array (optional).
-            Default resolution is 480x640.
-        depth_shm_name : str or None
-            Shared memory name for depth image (optional).
-        unit_test : bool
-            If True, enables a simple FPS/performance print-out.
-        image_show : bool
-            If True, displays the RGB image in a pop-up window.
-        depth_show : bool
-            If True, uses OpenCV to visualize the depth image in real-time.
-            
-        Note:
-        ----
-        This client expects JPEG-compressed image data with the format:
-        [4-byte width][4-byte height][4-byte JPEG length][JPEG data]
-        """
         self.server_address = server_address
         self.port = port
         self.running = True
-        
         self.image_show = image_show
-        self.depth_show = depth_show
         
-        # Optional shared memory for RGB image (single camera)
-        self.img_shape = img_shape
+        # Target Output Shape (Height, Width, Channels)
+        self.img_shape = img_shape 
+        
+        # Shared Memory
         self.img_shm_name = img_shm_name
         self.img_shm_enabled = False
         if (self.img_shape is not None) and (self.img_shm_name is not None):
-            self.img_shm = shared_memory.SharedMemory(name=self.img_shm_name)
-            self.img_array = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img_shm.buf)
-            self.img_shm_enabled = True
+            try:
+                self.img_shm = shared_memory.SharedMemory(name=self.img_shm_name)
+                self.img_array = np.ndarray(self.img_shape, dtype=np.uint8, buffer=self.img_shm.buf)
+                self.img_shm_enabled = True
+            except FileNotFoundError:
+                print(f"[VisionClient] Warning: Shared memory '{self.img_shm_name}' not found.")
 
-        # Optional shared memory for depth image (single camera)
-        self.depth_shape = depth_shape
-        self.depth_shm_name = depth_shm_name
-        self.depth_shm_enabled = False
-        if (self.depth_shape is not None) and (self.depth_shm_name is not None):
-            self.depth_shm = shared_memory.SharedMemory(name=self.depth_shm_name)
-            self.depth_array = np.ndarray(self.depth_shape, dtype=np.float32, buffer=self.depth_shm.buf)
-            self.depth_shm_enabled = True
-
-        # Simple performance metrics if needed
         self.unit_test = unit_test
-        if self.unit_test:
-            self._init_performance_metrics()
+        if self.unit_test: self._init_performance_metrics()
 
     def _init_performance_metrics(self):
-        """Initialize a simple set of performance metrics (FPS, etc.)."""
         self.frame_count = 0
         self.start_time = time.time()
         self.time_window = 1.0
         self.frame_times = deque()
 
-    def _update_performance_metrics(self, print_info, verbose=False):
-        """Update and print performance metrics (like FPS)."""
-        if not self.unit_test:
-            return
-
+    def _update_performance_metrics(self, print_info):
+        if not self.unit_test: return
         now = time.time()
         self.frame_times.append(now)
         while self.frame_times and self.frame_times[0] < now - self.time_window:
             self.frame_times.popleft()
         self.frame_count += 1
-
-        # Print every 30 frames
+        
         if self.frame_count % 30 == 0:
-            real_time_fps = len(self.frame_times) / self.time_window
-            elapsed = now - self.start_time
-            if verbose:
-                print(f"[VisionClient] FPS: {real_time_fps:.2f}, Frames: {self.frame_count}, Elapsed: {elapsed:.2f}s")
-                print(print_info, "\n")
-
-    def handle_color_image(self, color_img):
-        """
-        Handle the RGB image from single camera.
-        - Optionally display it
-        - Optionally copy to shared memory
-        """
-        if color_img is None:
-            return
-
-        # If shared memory is enabled for RGB images, copy it over
-        if self.img_shm_enabled and self.img_shape is not None:
-            if color_img.shape == self.img_shape:
-                np.copyto(self.img_array, color_img)
-            else:
-                # If shape doesn't match exactly, you might need a crop/resizing.
-                h, w = self.img_shape[0], self.img_shape[1]
-                np.copyto(self.img_array, color_img[:h, :w])
-
-        # If you want to display the image
-        if self.image_show:
-            # Convert RGB to BGR for OpenCV display (similar to example_vision_client.py)
-            display_img = color_img.copy()
-            if len(display_img.shape) == 3 and display_img.shape[2] == 3:
-                # Assume RGB format and convert to BGR for OpenCV
-                # display_img = cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
-                pass
-            
-            cv2.imshow("VisionClient - RGB", display_img)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                self.running = False
-
-    def handle_depth_image(self, depth_img):
-        """
-        Handle the depth image from single camera.
-        - Optionally copy to a shared memory region
-        - Optionally visualize with OpenCV if depth_show is True.
-        """
-        if depth_img is None:
-            return
-
-        # If shared memory is enabled for depth images, copy it
-        if self.depth_shm_enabled and self.depth_shape is not None:
-            if depth_img.shape == self.depth_shape:
-                np.copyto(self.depth_array, depth_img)
-            # else: adapt cropping/resizing as needed
-
-        # Real-time depth visualization using simplified approach from example_vision_client.py
-        if self.depth_show:
-            # Handle different depth formats
-            temp = depth_img.copy()
-            
-            # If the image has 3 channels, extract first channel
-            if temp.ndim == 3:
-                if temp.shape[2] == 1:
-                    temp = np.squeeze(temp, axis=2)
-                else:
-                    temp = temp[:, :, 0]
-            
-            # Use simplified depth visualization approach (similar to example_vision_client.py)
-            max_depth = 5000  # Maximum depth value for normalization
-            depth_colormap = cv2.applyColorMap(
-                cv2.convertScaleAbs(temp, alpha=255.0/max_depth), 
-                cv2.COLORMAP_JET
-            )
-            
-            cv2.imshow("VisionClient - Depth", depth_colormap)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                self.running = False
-    
-    def _close(self):
-        """Close the ZeroMQ socket and any windows."""
-        self.socket.close()
-        self.context.term()
-        if self.image_show or self.depth_show:
-            cv2.destroyAllWindows()
-        print("[VisionClient] Closed.")
+            fps = len(self.frame_times) / self.time_window
+            print(f"[VisionClient] FPS: {fps:.2f} | {print_info}")
 
     def receive_process(self):
-        """
-        Main loop for single camera:
-        - Connect to the server (PUB socket)
-        - Continuously receive JPEG-compressed data
-        - Decode JPEG and handle RGB and depth images
-        """
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
+        
+        # Use CONFLATE to always get the newest frame (low latency)
+        self.socket.setsockopt(zmq.CONFLATE, 1)
+        
         self.socket.connect(f"tcp://{self.server_address}:{self.port}")
-        self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.socket.setsockopt(zmq.SUBSCRIBE, b"")
 
-        print(f"[VisionClient] Subscribed to tcp://{self.server_address}:{self.port}. Waiting for data...")
+        print(f"[VisionClient] JPEG Client Started. Target Output: {self.img_shape}")
 
-        verbose = False
         try:
             while self.running:
                 try:
-                    start_time = time.time()
+                    # 1. Receive Compressed Data
+                    message = self.socket.recv()
+                    
+                    if len(message) < 12: continue
 
-                    # 接收消息
-                    message = self.socket.recv(zmq.NOBLOCK)
-                
-                    if len(message) < 12:  # 至少需要12字节的头部
+                    # 2. Parse Header [Width][Height][JPEG_SIZE]
+                    w_orig = struct.unpack('i', message[0:4])[0]
+                    h_orig = struct.unpack('i', message[4:8])[0]
+                    jpeg_size = struct.unpack('i', message[8:12])[0]
+                    
+                    # Validation
+                    if len(message) - 12 != jpeg_size:
                         continue
-                    
-                    # 解析头部信息：[宽度][高度][JPEG数据长度]
-                    width = struct.unpack('i', message[0:4])[0]
-                    height = struct.unpack('i', message[4:8])[0]
-                    jpeg_length = struct.unpack('i', message[8:12])[0]
-                    
-                    # 验证JPEG数据长度
-                    actual_jpeg_size = len(message) - 12
-                    
-                    if actual_jpeg_size != jpeg_length:
-                        if verbose:
-                            print(f"[Warning] JPEG size mismatch: expected {jpeg_length}, got {actual_jpeg_size}")
-                        continue
-                    
-                    # 提取JPEG数据并解码
-                    jpeg_data = message[12:]
-                    
-                    try:
-                        # 使用OpenCV解码JPEG数据
-                        image = cv2.imdecode(np.frombuffer(jpeg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+                    # 3. Decode JPEG (This is the "heavy" lifting)
+                    # Use np.frombuffer to create a view, then decode
+                    jpg_data = np.frombuffer(message, dtype=np.uint8, offset=12)
+                    decoded_img = cv2.imdecode(jpg_data, cv2.IMREAD_COLOR)
+
+                    if decoded_img is None: continue
+
+                    # 4. Resize to Target (1280x360)
+                    if self.img_shape is not None:
+                        target_h, target_w = self.img_shape[0], self.img_shape[1]
                         
-                        if image is None:
-                            if verbose:
-                                print("[Warning] Failed to decode JPEG image")
-                            continue
+                        # Only resize if necessary
+                        if (decoded_img.shape[1] != target_w) or (decoded_img.shape[0] != target_h):
+                            final_img = cv2.resize(decoded_img, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                        else:
+                            final_img = decoded_img
+                    else:
+                        final_img = decoded_img
+
+                    # 5. Shared Memory Copy
+                    if self.img_shm_enabled:
+                        np.copyto(self.img_array, final_img)
+
+                    # 6. Display
+                    if self.image_show:
+                        cv2.imshow("VisionClient (JPEG Stream)", final_img)
+                        if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                            self.running = False
                             
-                        # 验证解码后的图像尺寸
-                        if image.shape[0] != height or image.shape[1] != width:
-                            if verbose:
-                                print(f"[Warning] Decoded image size {image.shape} doesn't match expected {height}x{width}")
-                            # 但仍继续处理，因为JPEG解码可能产生轻微的尺寸差异
-                        
-                    except Exception as e:
-                        if verbose:
-                            print(f"[Warning] JPEG decode error: {e}")
-                        continue
-                    
-                    # # Check what data we have
-                    # have_color_data = 'rgb' in data and data['rgb'] is not None
-                    # have_depth_data = 'depth' in data and data['depth'] is not None
-                
-                    have_color_data = True
-                    have_depth_data = False
-                    
-                    if verbose:
-                        print(f"==> JPEG decoded image.shape: {image.shape}, original JPEG size: {jpeg_length} bytes")
-                    
-                    # Process data
-                    if have_color_data:
-                        self.handle_color_image(image)
-                    # if have_depth_data:
-                    #     self.handle_depth_image(image_data)
-                  
-                    end_time = time.time()
-                    loop_fps = 1.0 / (end_time - start_time)
-                    
-                    print_info = f"rgb: {have_color_data} | depth: {have_depth_data} | fps: {loop_fps:.2f} | jpeg_size: {jpeg_length}B"
-                    self._update_performance_metrics(print_info)
+                    self._update_performance_metrics(f"Orig: {w_orig}x{h_orig} -> JPEG Size: {jpeg_size/1024:.1f} KB")
 
                 except zmq.Again:
-                    # 没有消息，继续
-                    time.sleep(0.001)
                     continue
 
         except KeyboardInterrupt:
-            print("[VisionClient] Interrupted by user.")
-        except Exception as e:
-            print(f"[VisionClient] Error: {e}")
+            pass
         finally:
             self._close()
 
+    def _close(self):
+        self.socket.close()
+        self.context.term()
+        if self.image_show: cv2.destroyAllWindows()
+        print("[VisionClient] Closed.")
 
 if __name__ == "__main__":
-    # Example usage for single camera (640x480):
-    from multiprocessing import shared_memory, Array, Lock
     import threading
     
-    # Create shared memory for single camera - 640x480 image
     num_cameras = 2
-    image_shape = (360, 640 * num_cameras, 3)  # Height, Width, Channels for OpenCV format
-    image_shared_memory = shared_memory.SharedMemory(create=True, size=int(np.prod(image_shape) * np.uint8().itemsize * num_cameras))
-    image_array = np.ndarray(image_shape, dtype=np.uint8, buffer=image_shared_memory.buf)
+    # Target: 1280x360
+    target_shape = (360, 640 * num_cameras, 3) 
     
-    # Create shared memory for depth - same resolution as RGB
-    depth_shape = (360, 640)
-    depth_shared_memory = shared_memory.SharedMemory(create=True, size=int(np.prod(depth_shape) * np.float32().itemsize))
-    depth_array = np.ndarray(depth_shape, dtype=np.float32, buffer=depth_shared_memory.buf)
-    
-    # Display settings for single camera
-    image_show = True
-    depth_show = True
+    try:
+        shm_size = int(np.prod(target_shape) * np.uint8().itemsize)
+        image_shared_memory = shared_memory.SharedMemory(create=True, size=shm_size)
+        image_shm_name = image_shared_memory.name
+    except FileExistsError:
+        image_shm_name = "psm_img_00" 
 
     client = VisionClient(
-        server_address="192.168.123.164",  # or "127.0.0.1"
-        port=5556,
-        img_shape=image_shape,
-        img_shm_name=image_shared_memory.name,
-        depth_shape=depth_shape,
-        depth_shm_name=depth_shared_memory.name,
-        image_show=image_show,
-        depth_show=depth_show,
+        server_address="192.168.123.164", 
+        port=5555,
+        img_shape=target_shape,
+        img_shm_name=image_shm_name,
+        image_show=True,
         unit_test=True
     )
     
     vision_thread = threading.Thread(target=client.receive_process, daemon=True)
     vision_thread.start()
     
-    # Main loop
     try:
-        frame_count = 0
-        while True:
-            time.sleep(0.01)
-            frame_count += 1
-            
-            # Access the shared memory arrays if needed
-            # color_data = image_array.copy()
-            # depth_data = depth_array.copy()
-            
-    except KeyboardInterrupt:
-        print("[VisionClient] Interrupted by user.")
-    except Exception as e:
-        print(f"[VisionClient] Error: {e}")
+        while True: time.sleep(1)
+    except KeyboardInterrupt: pass
     finally:
-        # Clean up shared memory
-        image_shared_memory.unlink()
-        depth_shared_memory.unlink()
-        
-        image_shared_memory.close()
-        depth_shared_memory.close()
-
-    
+        try:
+            image_shared_memory.close()
+            image_shared_memory.unlink()
+        except: pass
