@@ -19,6 +19,7 @@ class VisionClient:
         img_shm_name=None,
         unit_test=False,
         image_show=False,
+        depth_show=False
     ):
         self.server_address = server_address
         self.port = port
