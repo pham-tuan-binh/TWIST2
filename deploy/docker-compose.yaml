@@ -7,7 +7,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     
-    image: twist2-dev:latest
+    image: phamtuanbinh/twist2-dev
     container_name: twist2-node
     
     # Network: Host mode is required for ROS/Unitree communication
