@@ -174,6 +174,9 @@ RUN source $CONDA_DIR/etc/profile.d/conda.sh && conda activate gmr \
 # Set the final working directory
 WORKDIR /home/$USERNAME/ws/TWIST2
 
+# Copy working directory
+COPY . .
+
 # Ensure the shell is bash for proper execution of source and chained commands
 SHELL ["/bin/bash", "-c"]
 
